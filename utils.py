@@ -269,19 +269,18 @@ def apply_column_mapping(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
 
 # ================= Pipeline =================
 def get_sentiment_score_llm(review_text, prompt, model, api_key):
-    openai.api_key = api_key
+    import openai
+    client = openai.OpenAI(api_key=api_key)
     messages = [
         {"role": "system", "content": prompt},
         {"role": "user", "content": review_text}
     ]
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=0
     )
-    # 返答例: "スコア: 7\n理由: ...", "7", "スコアは-3です。理由: ..."
-    content = response.choices[0].message['content']
-    # 数値抽出
+    content = response.choices[0].message.content
     import re
     match = re.search(r'(-?\d+(\.\d+)?)', content)
     score = float(match.group(1)) if match else 0
