@@ -1,10 +1,10 @@
-
 import re, os, io, hashlib, json
 import pandas as pd
 import numpy as np
 from datetime import datetime
 from typing import Dict, List, Tuple
 from io import BytesIO
+import openai
 
 # ================= Normalization =================
 def nk_normalize(s: str) -> str:
@@ -268,51 +268,46 @@ def apply_column_mapping(df: pd.DataFrame, mapping: dict) -> pd.DataFrame:
     return out
 
 # ================= Pipeline =================
+def get_sentiment_score_llm(review_text, prompt, model, api_key):
+    openai.api_key = api_key
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": review_text}
+    ]
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages,
+        temperature=0
+    )
+    # 返答例: "スコア: 7\n理由: ...", "7", "スコアは-3です。理由: ..."
+    content = response.choices[0].message['content']
+    # 数値抽出
+    import re
+    match = re.search(r'(-?\d+(\.\d+)?)', content)
+    score = float(match.group(1)) if match else 0
+    return score, content
+
 def enrich_reviews(df: pd.DataFrame, focus_df: pd.DataFrame, loc_df: pd.DataFrame,
                    translation_mode: str="stub", pos_th=2.0, neg_th=-2.0,
                    engine: str="rule", llm_prompt: str=DEFAULT_SENTIMENT_PROMPT,
                    llm_model: str="gpt-4o-mini", data_dir: str="data") -> pd.DataFrame:
-    for c in ["text_ja","sentiment_label","sentiment_score","sentiment_score_10","sentiment_reason","focus_kw_hits","author_country_code"]:
-        if c not in df.columns:
-            df[c] = ""
-
-    token_map = build_token_map(loc_df)
-    group_to_terms = build_focus_groups(focus_df)
-
-    enriched = []
+    api_key = os.environ.get("OPENAI_API_KEY")
+    results = []
     for _, row in df.iterrows():
-        body = row.get("body","")
-        lang = str(row.get("language","")).strip() if pd.notna(row.get("language","")) else ""
-        text_ja = row.get("text_ja","")
-        if not isinstance(text_ja, str) or not text_ja.strip():
-            text_ja = translate_to_ja(body, lang, mode=translation_mode)
-
+        review_text = row.get("body", "")
         if engine == "llm":
-            s10, label, reason = llm_sentiment_score_10(text_ja if text_ja else body,
-                                                        prompt=llm_prompt, model=llm_model,
-                                                        temperature=0.0, seed=42, data_dir=data_dir)
+            score, reason = get_sentiment_score_llm(review_text, llm_prompt, llm_model, api_key)
         else:
-            s10 = rule_sentiment_score_10(text_ja if text_ja else body)
-            label = label_from_score10(s10, pos_th=pos_th, neg_th=neg_th)
-            reason = "rule"
-
-        s = round(s10/10.0, 3)
-        cc = row.get("author_country_code","")
-        if not isinstance(cc, str) or not cc:
-            cc = infer_country(row.get("author_location_raw",""), lang, token_map)
-        hits = match_focus_groups(f"{text_ja} {body}", group_to_terms)
-
-        new_row = dict(row)
-        new_row["text_ja"] = text_ja
-        new_row["sentiment_score_10"] = round(s10,1)
-        new_row["sentiment_score"] = s
-        new_row["sentiment_label"] = label
-        new_row["sentiment_reason"] = reason
-        new_row["author_country_code"] = cc if cc else "Unknown"
-        new_row["focus_kw_hits"] = ";".join(hits)
-        enriched.append(new_row)
-
-    return pd.DataFrame(enriched)
+            # ルールベース（従来の処理）
+            score, reason = rule_based_sentiment(review_text)
+        label = "pos" if score >= pos_th else "neg" if score <= neg_th else "neu"
+        results.append({
+            **row,
+            "sentiment_score": score,
+            "sentiment_label": label,
+            "sentiment_reason": reason
+        })
+    return pd.DataFrame(results)
 
 # ================= KPIs & Export =================
 def kpi_summary(df: pd.DataFrame, low_thr: float=-0.2) -> dict:
