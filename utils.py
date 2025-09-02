@@ -291,20 +291,26 @@ def enrich_reviews(df: pd.DataFrame, focus_df: pd.DataFrame, loc_df: pd.DataFram
                    engine: str="rule", llm_prompt: str=DEFAULT_SENTIMENT_PROMPT,
                    llm_model: str="gpt-4o-mini", data_dir: str="data") -> pd.DataFrame:
     api_key = os.environ.get("OPENAI_API_KEY")
+    # キーワードグループ辞書を構築
+    group_to_terms = build_focus_groups(focus_df)
     results = []
     for _, row in df.iterrows():
         review_text = row.get("body", "")
+        # --- 感情分析 ---
         if engine == "llm":
             score, reason = get_sentiment_score_llm(review_text, llm_prompt, llm_model, api_key)
         else:
-            # ルールベース（従来の処理）
-            score, reason = rule_based_sentiment(review_text)
+            score = rule_sentiment_score_10(review_text)
+            reason = ""
         label = "pos" if score >= pos_th else "neg" if score <= neg_th else "neu"
+        # --- キーワードヒット ---
+        hits = match_focus_groups(review_text, group_to_terms)
         results.append({
             **row,
             "sentiment_score": score,
             "sentiment_label": label,
-            "sentiment_reason": reason
+            "sentiment_reason": reason,
+            "focus_kw_hits": ";".join(hits)
         })
     return pd.DataFrame(results)
 
