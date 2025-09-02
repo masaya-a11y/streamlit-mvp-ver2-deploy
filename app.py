@@ -1,4 +1,3 @@
-
 import os, json, pandas as pd
 import streamlit as st
 from utils import (
@@ -215,6 +214,10 @@ with tabs[1]:
             st.dataframe(kpis["focus_keywords"], use_container_width=True)
         with ctab3:
             st.subheader("レビュー明細（フィルタ後）")
+            # 必要な列がなければ空列で補う
+            for col in ["text_ja"]:
+                if col not in df.columns:
+                    df[col] = ""
             st.dataframe(df[["source","review_id","posted_date","author_country_code","sentiment_label","sentiment_score","focus_kw_hits","body","text_ja","sentiment_reason"]].head(800),
                          use_container_width=True)
 
